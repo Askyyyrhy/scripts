@@ -1,0 +1,92 @@
+function main() {
+  var emailAddress = "oc.ionutdobre@gmail.com"; // Replace with your email address
+  var campaignThreshold = 10; // Set your desired threshold for campaigns in RON
+  var keywordThreshold = 10; // Set your desired threshold for search terms in RON
+
+  // Get the account
+  var account = AdsApp.currentAccount();
+
+  // Get all campaigns in the account
+  var campaignIterator = AdsApp.campaigns().get();
+
+  var tableRows = [];
+
+  while (campaignIterator.hasNext()) {
+    var campaign = campaignIterator.next();
+
+    // Calculate average conversion cost for the last 30 days for campaigns
+    var campaignStats = campaign.getStatsFor("LAST_30_DAYS");
+    var campaignConversions = campaignStats.getConversions();
+    var campaignCost = campaignStats.getCost();
+    var campaignAvgConvCost = campaignCost / campaignConversions;
+
+    // Check if the average conversion cost for the campaign exceeds the campaign threshold
+    if (campaignAvgConvCost > campaignThreshold) {
+      var highCostSearchTerms = getHighCostSearchTerms(campaign, keywordThreshold);
+
+      for (var i = 0; i < highCostSearchTerms.length; i++) {
+        var rowData = [
+          campaign.getName(),
+          campaignAvgConvCost.toFixed(2) + " RON",
+          highCostSearchTerms[i].term,
+          highCostSearchTerms[i].avgConvCost
+        ];
+
+        tableRows.push(rowData);
+      }
+    }
+  }
+
+  // Create an HTML table with dynamic introductory text
+  var introText = "Lista de campanii + termeni de căutare care conțin costuri ridicate. Limită campanie setată la: " + campaignThreshold + " RON, Limită termen de căutare setată la: " + keywordThreshold + " RON";
+  var tableHtml = "<p>" + introText + "</p><table border='1'><tr><th> Nume Campanie </th><th> Avarage Cost Conv. - 30 Days </th><th> Termeni de cautare </th><th> Avarage Cost Conv. - Today </th></tr>";
+
+  for (var i = 0; i < tableRows.length; i++) {
+    tableHtml += "<tr>";
+    tableHtml += "<td>" + tableRows[i][0] + "</td>";
+    tableHtml += "<td>" + tableRows[i][1] + "</td>";
+    tableHtml += "<td>" + tableRows[i][2] + "</td>";
+    tableHtml += "<td>" + tableRows[i][3] + "</td>";
+    tableHtml += "</tr>";
+  }
+
+  tableHtml += "</table>";
+
+  // Send email alert with the HTML table
+  var subject = "Google Ads Alert - Cost Conversie Ridicat";
+  sendEmail(emailAddress, subject, tableHtml);
+}
+
+function getHighCostSearchTerms(campaign, threshold) {
+  var highCostTerms = [];
+  var queryIterator = campaign.keywords()
+    .withCondition("Conversions > 0")
+    .forDateRange("TODAY")
+    .get();
+
+  while (queryIterator.hasNext()) {
+    var keyword = queryIterator.next();
+    var keywordStats = keyword.getStatsFor("TODAY");
+    var keywordConversions = keywordStats.getConversions();
+    var keywordCost = keywordStats.getCost();
+    var keywordAvgConvCost = keywordCost / keywordConversions;
+
+    // Check if the average conversion cost for the keyword exceeds the keyword threshold
+    if (keywordAvgConvCost > threshold) {
+      highCostTerms.push({
+        term: keyword.getText(),
+        avgConvCost: keywordAvgConvCost.toFixed(2) + " RON"
+      });
+    }
+  }
+
+  return highCostTerms;
+}
+
+function sendEmail(recipient, subject, message) {
+  MailApp.sendEmail({
+    to: recipient,
+    subject: subject,
+    htmlBody: message
+  });
+}
