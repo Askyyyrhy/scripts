@@ -1,5 +1,5 @@
 function main() {
-  var emailAddress = "oc.ionutdobre@gmail.com"; // Replace with your email address
+  var emailAddress = "example@gmail.com"; // Replace with your email address
   var campaignThreshold = 10; // Set your desired threshold for campaigns in RON
   var keywordThreshold = 10; // Set your desired threshold for search terms in RON
 
