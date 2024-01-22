@@ -1,0 +1,13 @@
+This script is designed for use in Google Ads. It automates the process of monitoring and pausing certain keywords under specific conditions. Here's a breakdown:
+
+Target Ad Groups: It begins by defining a list of target ad group names and sets thresholds for click-through rate (CTR) and cost.
+
+Ad Group Filtering: The script then iterates through each enabled ad group in your Google Ads account.
+
+Checking Target Groups: For each ad group, it checks if the name matches any in the target list.
+
+Keyword Analysis: If there's a match, the script examines each keyword in the ad group, looking at their performance over the last 30 days.
+
+Pausing Keywords: Keywords with a CTR below the defined threshold (5% in this case) and a cost below another threshold (30 units of currency) are automatically paused.
+
+This script is useful for optimizing ad campaigns by automatically pausing underperforming keywords to improve efficiency and reduce unnecessary expenditure.
