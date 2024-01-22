@@ -1,0 +1,32 @@
+function main() {
+  var TARGET_ADGROUP_NAMES = ['Name of the AD GROUP']; // Add your ad group names here
+  var CTR_THRESHOLD = 0.05; // 5% CTR threshold
+  var COST_THRESHOLD = 30; // 30 Currency cost threshold
+
+  var adGroups = AdsApp.adGroups()
+    .withCondition("Status = ENABLED")
+    .get();
+
+  while (adGroups.hasNext()) {
+    var adGroup = adGroups.next();
+    var adGroupName = adGroup.getName();
+
+    // Check if the current ad group is one of the target ad groups
+    if (TARGET_ADGROUP_NAMES.indexOf(adGroupName) !== -1) {
+      var keywords = adGroup.keywords()
+        .withCondition("Status = ENABLED")
+        .get();
+
+      while (keywords.hasNext()) {
+        var keyword = keywords.next();
+        var stats = keyword.getStatsFor("LAST_30_DAYS"); // Get stats for the last 30 days
+        var ctr = stats.getCtr();
+        var cost = stats.getCost(); // Assuming the cost is reported in RON
+
+        if (ctr < CTR_THRESHOLD && cost < COST_THRESHOLD) {
+          keyword.pause(); // Pausing the keyword
+        }
+      }
+    }
+  }
+}
