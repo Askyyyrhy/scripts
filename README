@@ -11,3 +11,5 @@ Keyword Analysis: If there's a match, the script examines each keyword in the ad
 Pausing Keywords: Keywords with a CTR below the defined threshold (5% in this case) and a cost below another threshold (30 units of currency) are automatically paused.
 
 This script is useful for optimizing ad campaigns by automatically pausing underperforming keywords to improve efficiency and reduce unnecessary expenditure.
+
+Visit our website: www.encorem.ro
