@@ -1,0 +1,150 @@
+var fullReport = [];
+
+function main() {
+
+    // Collect PMax campaign IDs
+    const campaignIds = getPMaxCampaigns();
+    Logger.log(campaignIds);
+
+    // Get search terms for each campaign
+    for (var id of campaignIds) {
+        getPMaxSearchTerms(id);
+    }
+
+    if (fullReport.length > 0) {
+        let emailBody = generateHtmlReportWithTotals(fullReport);
+        let recipient = 'example@gmail.com'; // Set your email address
+        let subject = "PMax Search Terms Report";
+        MailApp.sendEmail({
+            to: recipient,
+            subject: subject,
+            htmlBody: emailBody
+        });
+        Logger.log('Email sent successfully');
+    } else {
+        Logger.log('No data to send');
+    }
+}
+
+function getPMaxSearchTerms(campaignId) {
+    let query = AdsApp.search(
+        `SELECT 
+           campaign.name,
+           campaign.advertising_channel_sub_type,
+           campaign_search_term_insight.category_label,
+           campaign_search_term_insight.id,
+           metrics.clicks,
+           metrics.impressions, 
+           metrics.conversions,
+           metrics.conversions_value
+          FROM campaign_search_term_insight 
+          WHERE segments.date DURING LAST_30_DAYS 
+           AND campaign_search_term_insight.campaign_id = '${campaignId}'`);
+
+    Logger.log(query.totalNumEntities());
+
+    while (query.hasNext()) {
+        let r = query.next();
+        let row = Object.assign(r.campaign, r.campaignSearchTermInsight, r.metrics);
+        delete row.resourceName;
+        fullReport.push(row);
+    }
+}
+
+function getPMaxCampaigns() {
+    let retVal = [];
+    let query = `SELECT campaign.id 
+               FROM campaign WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX' 
+                AND campaign.serving_status = 'SERVING' 
+                AND campaign.status = 'ENABLED'`;
+
+    let report = AdsApp.search(query);
+
+    while (report.hasNext()) {
+        let r = report.next();
+        let id = r.campaign.id;
+        if (retVal.indexOf(id) == -1) {
+            retVal.push(id);
+        }
+    }
+    return retVal;
+}
+
+function generateHtmlReportWithTotals(data) {
+    let headers = Object.keys(data[0]);
+
+    // Initialize totals
+    let totals = {};
+    headers.forEach(header => {
+        if (['clicks', 'impressions', 'conversions', 'conversions_value'].includes(header)) {
+            totals[header] = 0;
+        } else {
+            totals[header] = '';  // Non-numeric columns get empty totals
+        }
+    });
+
+    // Calculate totals for numeric columns
+    data.forEach(row => {
+        headers.forEach(header => {
+            if (['clicks', 'impressions', 'conversions', 'conversions_value'].includes(header)) {
+                totals[header] += row[header] ? parseFloat(row[header]) : 0;
+            }
+        });
+    });
+
+    // Create a styled HTML table structure
+    let html = `
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: Arial, sans-serif;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+            font-weight: bold;
+            padding: 8px;
+        }
+        td {
+            padding: 8px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        tr:nth-child(even) {background-color: #f2f2f2;}
+        tr:hover {background-color: #ddd;}
+        .totals-row {
+            font-weight: bold;
+            background-color: #f9f9f9;
+        }
+    </style>
+    <table border="1" cellpadding="5" cellspacing="0">
+    `;
+
+    // Add header row
+    html += '<tr>';
+    headers.forEach(function(header) {
+        html += '<th>' + header + '</th>';
+    });
+    html += '</tr>';
+
+    // Add data rows
+    data.forEach(function(row) {
+        html += '<tr>';
+        headers.forEach(function(header) {
+            html += '<td>' + (row[header] ? row[header] : '') + '</td>';
+        });
+        html += '</tr>';
+    });
+
+    // Add totals row
+    html += '<tr class="totals-row">';
+    headers.forEach(function(header) {
+        html += '<td><strong>' + (totals[header] !== '' ? totals[header] : 'TOTAL') + '</strong></td>';
+    });
+    html += '</tr>';
+
+    html += '</table>';
+
+    return html;
+}
