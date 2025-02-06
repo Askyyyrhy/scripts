@@ -1,0 +1,146 @@
+const RECIPIENT_EMAIL = "contact@encorem.ro";
+
+function main() {
+  const startDate = getFirstDayOfCurrentMonth(); // Data de început - 01 a lunii curente
+  const endDate = getCurrentDate(); // Data curentă
+  const activeCampaignData = calculateActiveCampaignData(startDate, endDate);
+
+  if (activeCampaignData.length > 0) {
+    sendFormattedEmail(RECIPIENT_EMAIL, activeCampaignData, startDate, endDate);
+  } else {
+    Logger.log("Nu s-au înregistrat costuri pentru campaniile active în perioada selectată.");
+  }
+}
+
+// Funcție pentru a obține începutul lunii curente (01/MM/YYYY)
+function getFirstDayOfCurrentMonth() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}-01`;
+}
+
+// Funcție pentru a obține data curentă în format YYYY-MM-DD
+function getCurrentDate() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// Funcție pentru calcularea datelor per campanie activă
+function calculateActiveCampaignData(startDate, endDate) {
+  const query = `
+    SELECT
+      campaign.name,
+      campaign.status,
+      metrics.cost_micros,
+      campaign_budget.amount_micros,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM
+      campaign
+    WHERE
+      segments.date BETWEEN '${startDate}' AND '${endDate}'
+      AND campaign.status = 'ENABLED'
+  `;
+
+  const report = AdsApp.report(query);
+  const rows = report.rows();
+
+  const campaignData = [];
+  while (rows.hasNext()) {
+    const row = rows.next();
+    const campaignName = row["campaign.name"];
+    const costMicros = parseFloat(row["metrics.cost_micros"]);
+    const budgetMicros = parseFloat(row["campaign_budget.amount_micros"]);
+    const conversions = parseFloat(row["metrics.conversions"]) || 0;
+    const conversionValue = parseFloat(row["metrics.conversions_value"]) || 0;
+
+    const cost = costMicros / 1e6; // Convertim din micros în moneda standard
+    const budget = budgetMicros / 1e6; // Convertim din micros în moneda standard
+    const costPerConversion = conversions > 0 ? cost / conversions : 0; // Cost per conversie
+    const conversionRate = conversions > 0 ? (conversions / cost) * 100 : 0; // Rată de conversie
+
+    campaignData.push({ campaignName, cost, budget, conversions, costPerConversion, conversionRate });
+  }
+
+  Logger.log(`Datele pentru campaniile active de la ${startDate} până la ${endDate}:`);
+  campaignData.forEach(c => 
+    Logger.log(`${c.campaignName}: Cost ${c.cost.toFixed(2)} RON, Buget ${c.budget.toFixed(2)} RON, Conversii ${c.conversions.toFixed(2)}, Cost/Conversie ${c.costPerConversion.toFixed(2)} RON, Rată de conversie ${c.conversionRate.toFixed(2)}%`)
+  );
+  
+  return campaignData;
+}
+
+// Funcție pentru trimiterea emailului formatat
+function sendFormattedEmail(email, campaignData, startDate, endDate) {
+  const subject = `Raport cost total`;
+
+  // Calculăm totalurile
+  const totalCost = campaignData.reduce((sum, c) => sum + c.cost, 0);
+  const totalBudget = campaignData.reduce((sum, c) => sum + c.budget, 0);
+  const totalConversions = campaignData.reduce((sum, c) => sum + c.conversions, 0);
+  const totalCostPerConversion = totalConversions > 0 ? totalCost / totalConversions : 0;
+  const totalConversionRate = totalConversions > 0 ? (totalConversions / totalCost) * 100 : 0;
+
+  let body = `
+    <html>
+      <body>
+        <h2>Raport Costuri Campanii Active</h2>
+        <p>Costurile totale pentru campaniile active din perioada <strong>${startDate}</strong> - <strong>${endDate}</strong> sunt:</p>
+        <table border="1" style="border-collapse: collapse; width: 80%; font-size: 14px;">
+          <thead>
+            <tr style="background-color: #f2f2f2;">
+              <th style="text-align: left; padding: 6px;">Campanie</th>
+              <th style="text-align: right; padding: 6px;">Cost (RON)</th>
+              <th style="text-align: right; padding: 6px;">Buget (RON)</th>
+              <th style="text-align: right; padding: 6px;">Conversii</th>
+              <th style="text-align: right; padding: 6px;">Cost/Conversie (RON)</th>
+              <th style="text-align: right; padding: 6px;">Rată Conversie (%)</th>
+            </tr>
+          </thead>
+          <tbody>
+  `;
+
+  campaignData.forEach(c => {
+    body += `
+      <tr>
+        <td style="text-align: left; padding: 6px;">${c.campaignName}</td>
+        <td style="text-align: right; padding: 6px;">${c.cost.toFixed(2)}</td>
+        <td style="text-align: right; padding: 6px;">${c.budget.toFixed(2)}</td>
+        <td style="text-align: right; padding: 6px;">${c.conversions.toFixed(2)}</td>
+        <td style="text-align: right; padding: 6px;">${c.costPerConversion.toFixed(2)}</td>
+        <td style="text-align: right; padding: 6px;">${c.conversionRate.toFixed(2)}</td>
+      </tr>
+    `;
+  });
+
+  body += `
+          </tbody>
+          <tfoot>
+            <tr style="font-weight: bold; background-color: #e6e6e6;">
+              <td style="text-align: left; padding: 6px;">Total</td>
+              <td style="text-align: right; padding: 6px;">${totalCost.toFixed(2)}</td>
+              <td style="text-align: right; padding: 6px;">${totalBudget.toFixed(2)}</td>
+              <td style="text-align: right; padding: 6px;">${totalConversions.toFixed(2)}</td>
+              <td style="text-align: right; padding: 6px;">${totalCostPerConversion.toFixed(2)}</td>
+              <td style="text-align: right; padding: 6px;">${totalConversionRate.toFixed(2)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <p>© encorem.ro</p>
+        <p><em>Raport generat automat.</em></p>
+      </body>
+    </html>
+  `;
+
+  MailApp.sendEmail({
+    to: email,
+    subject: subject,
+    htmlBody: body
+  });
+
+  Logger.log(`Email trimis către ${email} cu detaliile costurilor pentru campaniile active.`);
+}
