@@ -1,0 +1,658 @@
+// Copyright 2024. All Rights Reserved.
+// Flowboost Performance Labelizer
+// Custom requests? arjan@flowboost.com
+//
+// V4.1
+//
+// Learn more about this script on ppclibrary.com
+//
+////////////////////////////////////////////////////////////////////
+
+// Instruction for this script:
+// 1. Enable Shopping Content API from Advanced APIs in the top right corner.
+// 2. Copy the spreadsheet below and paste in the new spreadsheet url here.
+// 3. Set the account settings in the Config sheet.
+// 4. Run the script.
+
+// Optional: Add the conversion action names you want to use for the script in the conversionActionNames array.
+
+// Add the spreadsheet URL here.
+var spreadsheetURL = "https://docs.google.com/spreadsheets/d/1tpG0naAYixXktrA0DAAQui28x-WTEsro3DVuN3Ne7OU/copy" 
+
+// Add the conversion action names you want to use for the script here.
+// If you want to use the default conversion action names, leave the array empty.
+// Example: ['Profit - Browser', 'Profit - Imported']
+var conversionActionNames = [];
+
+// Flowboost Industries BV - Terms of Service
+//
+// 1. Fair Use Policy
+// This script is exclusively licensed to the entity to whom it is provided. 
+// The entity is responsible for ensuring that the script is used in compliance with this agreement and for any misuse by its members.
+// 
+// 2. Copyright
+// All rights, including copyright, in the script are owned by Flowboost Industries BV. No rights are granted to the licensee other than as expressly set forth herein.
+// 
+// 3. License Use
+// This license is valid for use solely by the entity to which it is issued. Should another entity wish to utilize this script, a separate license must be obtained. 
+// Redistribution, sharing, or any form of distribution outside the licensed entity is strictly prohibited.
+// 
+// 4. No Guarantees
+// Flowboost Industries BV does not guarantee that the script will be error-free, uninterrupted, or that it will meet all of your requirements. 
+// The licensee acknowledges that use of the script is at their own risk.
+// 
+// 5. Limitation of Liability
+// Flowboost Industries BV shall not be liable for any direct, indirect, incidental, special, consequential, or exemplary damages, including but not limited to, 
+// damages for loss of profits, goodwill, use, data or other intangible losses (even if Flowboost Industries BV has been advised of the possibility of such damages), resulting from the use or the inability to use the script.
+// 
+// 6. Acceptance of Terms
+// By using this script, the entity acknowledges that they have read, understood, and agree to be bound by these terms. 
+// If you do not agree with these terms, you should refrain from using the script.
+// 
+////////////////////////////////////////////////////////////////////
+
+// Start of the script, don't change anything below this line
+////////////////////////////////////////////////////////////////////
+
+var variables = {
+    bucketRoas: "true",
+    bucketCpa: "false",
+    targetRoas: 5,
+    targetCpa: 10,
+    daysAgo: 30,
+    labelName: "none",
+    conversionLag: 1,
+    percentageDifferenceTarget: 20,
+    addToOverIndex: "true",
+    clickMultiplier: 3,
+    merchantId: 111222333,
+    brandFilter: "none",
+    availabilityFilter: "none",
+    conditionFilter: "none",
+    channelFilter: "none",
+    advancedGraphs: "false",
+}
+
+function main() {
+    const spreadsheet = SpreadsheetApp.openByUrl(spreadsheetURL);
+    spreadsheet.rename(AdsApp.currentAccount().getName() + ' - Flowboost Performance Labelizer v4 - Flowboost (c) ');
+    updateVariablesFromSheet(spreadsheet)
+    if (variables.merchantId === 111222333) {
+        Logger.log("Error: Change the Merchant Center ID in the Config sheet.");
+        return;
+    }
+    if (variables.bucketRoas === variables.bucketCpa) {
+        Logger.log("Error: Both ROAS bucket and CPA bucket cannot be set to the same value. Please set one to true and the other to false.");
+        return;
+    }
+    if (!AdsApp.labels().withCondition("label.name = '" + variables.labelName + "'").get().hasNext() && variables.labelName != "none") {
+        Logger.log("Error: No label found with name '" + variables.labelName + "'. Please ensure the label is correctly created\nError: Be sure to create the label at account level, and not at mcc level.");
+        return;
+    }
+    const merchantData = getMerchantData();
+    let productMetricsData;
+    if (conversionActionNames.length === 0) {
+        productMetricsData = getProductData(merchantData);
+    } else {
+        productMetricsData = getProductDataFiltered(merchantData);
+    }
+    updateDataperdate(productMetricsData, spreadsheet);
+    if (variables.advancedGraphs === "true") {
+        updateProductdataperdate(productMetricsData, spreadsheet);
+    }
+    updateProductfeed(productMetricsData, spreadsheet);
+    Logger.log("Script finished successfully.");
+}
+
+function getMerchantData() {
+    const priceData = [];
+    let pageToken;
+    let keepLooping = true;
+    while (keepLooping) {
+        const pageSize = 1e3;
+        const conditions = [
+            variables.brandFilter !== "none" ? `product_view.brand = '${variables.brandFilter.toLowerCase()}'` : null,
+            variables.availabilityFilter !== "none" ? `product_view.availability = '${variables.availabilityFilter.toUpperCase()}'` : null,
+            variables.conditionFilter !== "none" ? `product_view.condition = '${variables.conditionFilter.toUpperCase()}'` : null,
+            variables.channelFilter !== "none" ? `product_view.channel = '${variables.channelFilter.toUpperCase()}'` : null
+        ].filter(Boolean);
+        const queryParts = [
+            "SELECT product_view.id, product_view.title FROM ProductView",
+            conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : null
+        ];
+        const queryString = queryParts.filter(Boolean).join(' ');
+        const resource = { query: queryString, pageSize, pageToken };
+        const productReports = ShoppingContent.Reports.search(resource, variables.merchantId);
+        if (productReports.results && productReports.results.length > 0) {
+            for (const productReport of productReports.results) {
+                const productID = productReport.productView.id.substring(productReport.productView.id.lastIndexOf(":") + 1);
+                const productTitle = productReport.productView.title;
+                priceData[productID] = productTitle;
+            }
+        } else {
+            Logger.log("There are no products available in the product view report.");
+            break;
+        }
+        if (productReports.nextPageToken == null) {
+            keepLooping = false;
+        } else {
+            pageToken = productReports.nextPageToken;
+        }
+    }
+    return priceData;
+}
+
+function getCampaignIterator(condition) {
+    const campaignIterators = [
+        AdsApp.campaigns().withCondition(condition).get(),
+        AdsApp.shoppingCampaigns().withCondition(condition).get(),
+        AdsApp.performanceMaxCampaigns().withCondition(condition).get()
+    ];
+    return {
+        hasNext: () => campaignIterators.some(iterator => iterator.hasNext()),
+        next: () => {
+            for (const iterator of campaignIterators) {
+                if (iterator.hasNext()) {
+                    return iterator.next();
+                }
+            }
+        }
+    };
+}
+
+function getProductData(merchantData) {
+    const today = new Date();
+    today.setDate(today.getDate() - Number(variables.conversionLag));
+    const daysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - Number(variables.daysAgo));
+    const dateFrom = Utilities.formatDate(daysAgo, AdsApp.currentAccount().getTimeZone(), 'yyyyMMdd');
+    const dateTo = Utilities.formatDate(today, AdsApp.currentAccount().getTimeZone(), 'yyyyMMdd');
+    const query = `SELECT campaign.name, campaign.id, segments.product_custom_attribute0, segments.product_custom_attribute1, segments.product_custom_attribute2, segments.product_custom_attribute3, segments.product_custom_attribute4, segments.product_brand, segments.product_condition, segments.product_feed_label, segments.product_type_l1, segments.product_type_l2, segments.product_type_l3, segments.product_type_l4, segments.product_type_l5, segments.product_item_id, metrics.impressions, metrics.clicks, metrics.ctr, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM shopping_performance_view WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'`;
+    const products = [];
+    const report = AdsApp.report(query);
+    const rows = report.rows();
+    const aggregatedProducts = {};
+    let totalConversions = 0;
+    let totalClicks = 0;
+    let conversions = 0;
+    let clicks = 0;
+    let campaignIds;
+    if (variables.labelName !== "none"){
+        const customerId = AdsApp.currentAccount().getCustomerId().replace(/-/g, ''); 
+        const labelIterator = AdsApp.labels().withCondition(`label.name = '${variables.labelName}'`).get();
+        if (labelIterator.hasNext()) {
+            const labelObject = labelIterator.next();
+            const labelId = labelObject.getId();
+            const labelString = `customers/${customerId}/labels/${labelId}`;
+            const campaignIterator = getCampaignIterator(`campaign.labels CONTAINS ANY ('${labelString}') AND campaign.status = ENABLED`);  
+            campaignIds = new Set();
+            while (campaignIterator.hasNext()) {
+                const campaign = campaignIterator.next();
+                campaignIds.add(campaign.getId());
+            }
+        }
+    }
+    for (const row of rows) {
+        if (variables.labelName === "none" || campaignIds.has(row['campaign.id'])) {
+            const offer_id = row['segments.product_item_id'];
+            const impressions = parseInt(row['metrics.impressions']);
+            clicks = parseInt(row['metrics.clicks']);
+            const cost = parseFloat(row['metrics.cost_micros']) / 1000000;
+            conversions = parseFloat(row['metrics.conversions']);
+            const conversionValue = parseFloat(row['metrics.conversions_value']);
+            const customlabel0 = row['segments.product_custom_attribute0'];
+            const customlabel1 = row['segments.product_custom_attribute1'];
+            const customlabel2 = row['segments.product_custom_attribute2'];
+            const customlabel3 = row['segments.product_custom_attribute3'];
+            const customlabel4 = row['segments.product_custom_attribute4'];
+            const brand = row['segments.product_brand'];
+            const condition = row['segments.product_condition'];
+            const feedLabel = row['segments.product_feed_label'];
+            const productTypes = [
+                row['segments.product_type_l1'],
+                row['segments.product_type_l2'],
+                row['segments.product_type_l3'],
+                row['segments.product_type_l4'],
+                row['segments.product_type_l5']
+            ].filter(item => item && item.trim() !== '').join(' > ');
+            if (!aggregatedProducts.hasOwnProperty(offer_id)) {
+                aggregatedProducts[offer_id] = {
+                    impressions: 0,
+                    clicks: 0,
+                    cost: 0,
+                    conversions: 0,
+                    conversionValue: 0,
+                    customlabel0,
+                    customlabel1,
+                    customlabel2,
+                    customlabel3,
+                    customlabel4,
+                    brand,
+                    condition,
+                    feedLabel,
+                    productTypes
+                };
+            }
+            aggregatedProducts[offer_id].impressions += impressions;
+            aggregatedProducts[offer_id].clicks += clicks;
+            aggregatedProducts[offer_id].cost += cost;
+            aggregatedProducts[offer_id].conversions += conversions;
+            aggregatedProducts[offer_id].conversionValue += conversionValue;
+        }
+        totalConversions += conversions;
+        totalClicks += clicks;
+    }
+    const averageConversionRate = totalConversions / totalClicks * 100;
+    const targetRoasDiffover = Number(variables.targetRoas) + (Number(variables.percentageDifferenceTarget) / 100 * Number(variables.targetRoas));
+    const targetRoasDiffnear = Number(variables.targetRoas) - (Number(variables.percentageDifferenceTarget) / 100 * Number(variables.targetRoas));
+    const targetCpaDiffover = Number(variables.targetCpa) - (Number(variables.percentageDifferenceTarget) / 100 * Number(variables.targetCpa));
+    const targetCpaDiffnear = Number(variables.targetCpa) + (Number(variables.percentageDifferenceTarget) / 100 * Number(variables.targetCpa));
+    const clicksThreshold = (100 * Number(variables.clickMultiplier)) / averageConversionRate;
+    for (const offer_id in merchantData) {
+        const productData = aggregatedProducts[offer_id.toLowerCase()] || {
+            impressions: 0,
+            clicks: 0,
+            cost: 0,
+            conversions: 0,
+            conversionValue: 0
+        };
+        const productTitle = merchantData[offer_id];
+        let isProductType = '';
+        const costPerConv = (productData.cost || 0) / (productData.conversions || 1);
+        const convValuePerCost = (productData.conversionValue || 0) / (productData.cost || 1);
+        if (variables.bucketRoas === "true") {
+            if (variables.addToOverIndex === "true" && productData.clicks > clicksThreshold && convValuePerCost >= targetRoasDiffover) {
+                isProductType = 'over-index';
+            } else if (productData.clicks >= (100 / averageConversionRate) && convValuePerCost >= Number(variables.targetRoas)) {
+                isProductType = 'index';
+            } else if (convValuePerCost >= targetRoasDiffnear) {
+                isProductType = 'near-index';
+            } else if (productData.conversions > 1 || productData.clicks > (100 / averageConversionRate)) {
+                isProductType = 'under-index';
+            } else {
+                isProductType = 'no-index';
+            }
+        } else if (variables.bucketCpa === "true") {
+            if (variables.addToOverIndex === "true" && productData.clicks > clicksThreshold && costPerConv <= targetCpaDiffover && productData.conversions >= 1) {
+                isProductType = 'over-index';
+            } else if (productData.clicks >= (100 / averageConversionRate) && costPerConv <= Number(variables.targetCpa) && productData.conversions >= 1) {
+                isProductType = 'index';
+            } else if (costPerConv <= targetCpaDiffnear && productData.conversions >= 1) {
+                isProductType = 'near-index';
+            } else if (productData.conversions > 1 || productData.clicks > (100 / averageConversionRate)) {
+                isProductType = 'under-index';
+            } else {
+                isProductType = 'no-index';
+            }
+        }
+        products.push([
+            productTitle,
+            offer_id,
+            productData.impressions,
+            productData.clicks,
+            productData.cost,
+            productData.conversions,
+            productData.conversionValue,
+            convValuePerCost,
+            costPerConv,
+            isProductType,
+            productData.customlabel0,
+            productData.customlabel1,
+            productData.customlabel2,
+            productData.customlabel3,
+            productData.customlabel4,
+            productData.brand,
+            productData.condition,
+            productData.feedLabel,
+            productData.productTypes
+        ]);
+    }
+    return products;
+}
+
+function getProductDataFiltered(merchantData) {
+    const today = new Date();
+    today.setDate(today.getDate() - variables.conversionLag);
+    const daysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - variables.daysAgo);
+    const dateFrom = Utilities.formatDate(daysAgo, AdsApp.currentAccount().getTimeZone(), 'yyyyMMdd');
+    const dateTo = Utilities.formatDate(today, AdsApp.currentAccount().getTimeZone(), 'yyyyMMdd');
+    const queryMetrics = `SELECT campaign.name, campaign.id, segments.product_custom_attribute0, segments.product_custom_attribute1, segments.product_custom_attribute2, segments.product_custom_attribute3, segments.product_custom_attribute4, segments.product_brand, segments.product_condition, segments.product_feed_label, segments.product_type_l1, segments.product_type_l2, segments.product_type_l3, segments.product_type_l4, segments.product_type_l5, segments.product_item_id, metrics.impressions, metrics.clicks, metrics.ctr, metrics.cost_micros FROM shopping_performance_view WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'`;
+    const queryConversions = `SELECT segments.conversion_action_name, campaign.name, campaign.id, segments.product_item_id, metrics.all_conversions, metrics.all_conversions_value FROM shopping_performance_view WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}' AND segments.conversion_action_name IN ('${conversionActionNames.join("','")}')`;
+    const products = [];
+    const reportMetrics = AdsApp.report(queryMetrics);
+    const reportConversions = AdsApp.report(queryConversions);
+    const rowsMetrics = reportMetrics.rows();
+    const rowsConversions = reportConversions.rows();
+    const aggregatedProducts = {};
+    const conversionData = {};
+    let totalConversions = 0;
+    let totalClicks = 0;
+    let conversions = 0;
+    let clicks = 0;
+    let campaignIds;
+    if (variables.labelName !== "none"){
+        const customerId = AdsApp.currentAccount().getCustomerId().replace(/-/g, ''); 
+        const labelIterator = AdsApp.labels().withCondition(`label.name = '${variables.labelName}'`).get();
+        if (labelIterator.hasNext()) {
+            const labelObject = labelIterator.next();
+            const labelId = labelObject.getId();
+            const labelString = `customers/${customerId}/labels/${labelId}`;
+            const campaignIterator = getCampaignIterator(`campaign.labels CONTAINS ANY ('${labelString}') AND campaign.status = ENABLED`);  
+            campaignIds = new Set();
+            while (campaignIterator.hasNext()) {
+                const campaign = campaignIterator.next();
+                campaignIds.add(campaign.getId());
+            }
+        }
+    }
+    for (const row of rowsConversions) {
+        const offer_id = row['segments.product_item_id'];
+        conversions = parseFloat(row['metrics.all_conversions']);
+        const conversionValue = parseFloat(row['metrics.all_conversions_value']);
+        if (!conversionData.hasOwnProperty(offer_id)) {
+            conversionData[offer_id] = {
+                conversions: 0,
+                conversionValue: 0
+            };
+        }
+        conversionData[offer_id].conversions += conversions;
+        conversionData[offer_id].conversionValue += conversionValue;
+    }
+    for (const row of rowsMetrics) {
+        if (variables.labelName === "none" || campaignIds.has(row['campaign.id'])) {
+            const offer_id = row['segments.product_item_id'];
+            const impressions = parseInt(row['metrics.impressions']);
+            clicks = parseInt(row['metrics.clicks']);
+            const cost = parseFloat(row['metrics.cost_micros']) / 1000000;
+            conversions = conversionData[offer_id]?.conversions || 0;
+            const conversionValue = conversionData[offer_id]?.conversionValue || 0;
+            const customlabel0 = row['segments.product_custom_attribute0'];
+            const customlabel1 = row['segments.product_custom_attribute1'];
+            const customlabel2 = row['segments.product_custom_attribute2'];
+            const customlabel3 = row['segments.product_custom_attribute3'];
+            const customlabel4 = row['segments.product_custom_attribute4'];
+            const brand = row['segments.product_brand'];
+            const condition = row['segments.product_condition'];
+            const feedLabel = row['segments.product_feed_label'];
+            const productTypes = [
+                row['segments.product_type_l1'],
+                row['segments.product_type_l2'],
+                row['segments.product_type_l3'],
+                row['segments.product_type_l4'],
+                row['segments.product_type_l5']
+            ].filter(item => item && item.trim() !== '').join(' > ');
+            if (!aggregatedProducts.hasOwnProperty(offer_id)) {
+                aggregatedProducts[offer_id] = {
+                    impressions: 0,
+                    clicks: 0,
+                    cost: 0,
+                    conversions: 0,
+                    conversionValue: 0,
+                    customlabel0,
+                    customlabel1,
+                    customlabel2,
+                    customlabel3,
+                    customlabel4,
+                    brand,
+                    condition,
+                    feedLabel,
+                    productTypes
+                };
+            }
+            aggregatedProducts[offer_id].impressions += impressions;
+            aggregatedProducts[offer_id].clicks += clicks;
+            aggregatedProducts[offer_id].cost += cost;
+            aggregatedProducts[offer_id].conversions = conversions;
+            aggregatedProducts[offer_id].conversionValue = conversionValue;
+        }
+        totalConversions += conversions;
+        totalClicks += clicks;
+    }
+    const averageConversionRate = totalConversions / totalClicks * 100;
+    const targetRoasDiffover = variables.targetRoas + (variables.percentageDifferenceTarget / 100 * variables.targetRoas);
+    const targetRoasDiffnear = variables.targetRoas - (variables.percentageDifferenceTarget / 100 * variables.targetRoas);
+    const targetCpaDiffover = variables.targetCpa - (variables.percentageDifferenceTarget / 100 * variables.targetCpa);
+    const targetCpaDiffnear = variables.targetCpa + (variables.percentageDifferenceTarget / 100 * variables.targetCpa);
+    const clicksThreshold = (100 * variables.clickMultiplier) / averageConversionRate;
+    for (const offer_id in merchantData) {
+        const productData = aggregatedProducts[offer_id.toLowerCase()] || {
+            impressions: 0,
+            clicks: 0,
+            cost: 0,
+            conversions: 0,
+            conversionValue: 0
+        };
+        const productTitle = merchantData[offer_id];
+        let isProductType = '';
+        const costPerConv = (productData.cost || 0) / (productData.conversions || 1);
+        const convValuePerCost = (productData.conversionValue || 0) / (productData.cost || 1);
+        if (variables.bucketRoas === "true") {
+            if (variables.addToOverIndex === "true" && productData.clicks > clicksThreshold && convValuePerCost >= targetRoasDiffover) {
+                isProductType = 'over-index';
+            } else if (productData.clicks >= (100 / averageConversionRate) && convValuePerCost >= variables.targetRoas) {
+                isProductType = 'index';
+            } else if (convValuePerCost >= targetRoasDiffnear) {
+                isProductType = 'near-index';
+            } else if (productData.conversions > 1 || productData.clicks > (100 / averageConversionRate)) {
+                isProductType = 'under-index';
+            } else {
+                isProductType = 'no-index';
+            }
+        } else if (variables.bucketCpa === "true") {
+            if (variables.addToOverIndex === "true" && productData.clicks > clicksThreshold && costPerConv <= targetCpaDiffover && productData.conversions >= 1) {
+                isProductType = 'over-index';
+            } else if (productData.clicks >= (100 / averageConversionRate) && costPerConv <= variables.targetCpa && productData.conversions >= 1) {
+                isProductType = 'index';
+            } else if (costPerConv <= targetCpaDiffnear && productData.conversions >= 1) {
+                isProductType = 'near-index';
+            } else if (productData.conversions > 1 || productData.clicks > (100 / averageConversionRate)) {
+                isProductType = 'under-index';
+            } else {
+                isProductType = 'no-index';
+            }
+        }
+        products.push([
+            productTitle,
+            offer_id,
+            productData.impressions,
+            productData.clicks,
+            productData.cost,
+            productData.conversions,
+            productData.conversionValue,
+            convValuePerCost,
+            costPerConv,
+            isProductType,
+            productData.customlabel0,
+            productData.customlabel1,
+            productData.customlabel2,
+            productData.customlabel3,
+            productData.customlabel4,
+            productData.brand,
+            productData.condition,
+            productData.feedLabel,
+            productData.productTypes
+        ]);
+    }
+    return products;
+}
+
+function updateDataperdate(products, spreadsheet) {
+    const buckets = ['over-index', 'index', 'near-index', 'no-index', 'under-index'];
+    const sheet = spreadsheet.getSheetByName('dataperdate');
+    let today = new Date();
+    today.setDate(today.getDate() - variables.conversionLag);
+    const lastRow = sheet.getLastRow();
+    const lastDate = sheet.getRange(lastRow, 1).getValue();
+    const newDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    let startRow = lastRow;
+    if (lastDate.toString() !== newDate.toString()) {
+        startRow = lastRow + 1;
+    }
+    let productTypeCounts = {
+        'over-index': 0,
+        'index': 0,
+        'near-index': 0,
+        'no-index': 0,
+        'under-index': 0
+    };
+    let kpiTotals = {
+        'over-index': { impressions: 0, clicks: 0, costs: 0, conversionValue: 0, convValuePerCost: 0, costPerConv: 0, conversions: 0 },
+        'index': { impressions: 0, clicks: 0, costs: 0, conversionValue: 0, convValuePerCost: 0, costPerConv: 0, conversions: 0 },
+        'near-index': { impressions: 0, clicks: 0, costs: 0, conversionValue: 0, convValuePerCost: 0, costPerConv: 0, conversions: 0 },
+        'no-index': { impressions: 0, clicks: 0, costs: 0, conversionValue: 0, convValuePerCost: 0, costPerConv: 0, conversions: 0 },
+        'under-index': { impressions: 0, clicks: 0, costs: 0, conversionValue: 0, convValuePerCost: 0, costPerConv: 0, conversions: 0 }
+    };
+    for (const product of products) {
+        const productType = product[9];
+        productTypeCounts[productType]++;
+        kpiTotals[productType].impressions += parseFloat(product[2]);
+        kpiTotals[productType].clicks += parseFloat(product[3]);
+        kpiTotals[productType].costs += parseFloat(product[4]);
+        kpiTotals[productType].conversions += parseFloat(product[5]);
+        kpiTotals[productType].conversionValue += parseFloat(product[6]);
+        kpiTotals[productType].convValuePerCost += parseFloat(product[7]);
+        kpiTotals[productType].costPerConv += parseFloat(product[8]);
+    }
+    let newRowData = [];
+    newRowData[0] = newDate;
+    newRowData[1] = productTypeCounts['over-index'];
+    newRowData[2] = productTypeCounts['index'];
+    newRowData[3] = productTypeCounts['near-index'];
+    newRowData[4] = productTypeCounts['no-index'];
+    newRowData[5] = productTypeCounts['under-index'];
+    for (const [i, bucket] of buckets.entries()) {
+        const conversionValue = kpiTotals[bucket].conversionValue;
+        const costs = kpiTotals[bucket].costs;
+        const conversions = kpiTotals[bucket].conversions;
+        const convValuePerCost = calculateRatio(conversionValue, costs);
+        const costPerConv = calculateRatio(costs, conversions);
+        const baseIndex = 6 + i * 7;
+        newRowData[baseIndex] = kpiTotals[bucket].impressions;
+        newRowData[baseIndex + 1] = kpiTotals[bucket].clicks;
+        newRowData[baseIndex + 2] = costs;
+        newRowData[baseIndex + 3] = conversionValue;
+        newRowData[baseIndex + 4] = convValuePerCost;
+        newRowData[baseIndex + 5] = costPerConv;
+        newRowData[baseIndex + 6] = conversions;
+    }
+    newRowData[41] = variables.targetRoas;
+    newRowData[42] = variables.targetCpa;
+    let totalCosts = 0;
+    let totalConversionsValue = 0;
+    let totalConversions = 0;
+    for (const bucket in kpiTotals) {
+        totalCosts += kpiTotals[bucket].costs;
+        totalConversionsValue += kpiTotals[bucket].conversionValue;
+        totalConversions += kpiTotals[bucket].conversions;
+    }
+    const actualroas = calculateRatio(totalConversionsValue, totalCosts);
+    const actualcpa = calculateRatio(totalCosts, totalConversions);
+    newRowData[43] = actualroas;
+    newRowData[44] = actualcpa;
+    sheet.getRange(startRow, 1, 1, newRowData.length).setValues([newRowData]);
+}
+
+function calculateRatio(numerator, denominator) {
+    const ratio = numerator / denominator;
+    return isNaN(ratio) || !isFinite(ratio) ? 0 : ratio;
+}
+
+function updateProductdataperdate(products, spreadsheet) {
+    const sheet = spreadsheet.getSheetByName('productdataperdate');
+    let today = new Date();
+    today.setDate(today.getDate() - variables.conversionLag);
+    const newDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const allNewRowData = [];
+    for (const product of products) {
+        let newRowData = [];
+        newRowData[0] = newDate;
+        newRowData[1] = product[0]; 
+        newRowData[2] = product[1];
+        newRowData[3] = parseFloat(product[2]); 
+        newRowData[4] = parseFloat(product[3]);
+        newRowData[5] = parseFloat(product[4]); 
+        newRowData[6] = parseFloat(product[5]);
+        newRowData[7] = parseFloat(product[6]);
+        newRowData[8] = parseFloat(product[7]);
+        newRowData[9] = parseFloat(product[8]);
+        newRowData[10] = product[9];
+        newRowData[11] = product[10];
+        newRowData[12] = product[11];
+        newRowData[13] = product[12];
+        newRowData[14] = product[13];
+        newRowData[15] = product[14];
+        newRowData[16] = product[15];
+        newRowData[17] = product[16];
+        newRowData[18] = product[17];
+        newRowData[19] = product[18];
+        allNewRowData.push(newRowData);
+    }
+    if (!allNewRowData || allNewRowData.length === 0) {
+        Logger.log("No products found with the applied filters.");
+        return;
+    }
+    const dataRange = sheet.getDataRange();
+    const dataValues = dataRange.getValues();
+    for (let i = 0; i < allNewRowData.length; i++) {
+        const newRowData = allNewRowData[i];
+        const product = newRowData[1];
+        const date = newRowData[0];
+        let found = false;
+        for (let j = 0; j < dataValues.length; j++) {
+            if (dataValues[j][0].toString() === date.toString() && dataValues[j][1] === product) {
+                sheet.getRange(j + 1, 1, 1, newRowData.length).setValues([newRowData]);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            sheet.appendRow(newRowData);
+        }
+    }
+    sheet.getRange("C2:C" + sheet.getLastRow()).setNumberFormat("@");
+}
+
+function updateProductfeed(data, spreadsheet) {
+    const sheet = spreadsheet.getSheetByName('Product Feed');
+    const start_row = 2;
+    const endRow = start_row + data.length - 1;
+    const range = sheet.getRange('A' + start_row + ':' + 'J' + endRow);
+    if (data.length != 0) {
+        range.clearContent();
+        const newData = data.map(product => [
+            product[0],
+            product[1],
+            product[2],
+            product[3],
+            product[4],
+            product[5],
+            product[6],
+            product[7],
+            product[8],
+            product[9]
+        ]);
+        range.setValues(newData);
+    }
+}
+
+function updateVariablesFromSheet(spreadsheet) {
+    const variableNames = [
+        'bucketRoas', 'bucketCpa', 'targetRoas', 'targetCpa', 'daysAgo',
+        'labelName', 'conversionLag', 'percentageDifferenceTarget',
+        'addToOverIndex', 'clickMultiplier', 'merchantId', 'brandFilter', 
+        'availabilityFilter', 'conditionFilter', 'channelFilter', 'advancedGraphs'
+    ];
+    try {
+        const sheet = spreadsheet.getSheetByName('Config');
+        variableNames.forEach(variableName => {
+            const range = sheet.getRange(variableName);
+            if (range) {
+                const value = range.getValue();
+                if (value !== "none") {
+                    variables[variableName] = value.replace(/,/g, '.');
+                }
+            }
+        });
+    } catch (e) {
+        console.error("Error in updateVariablesFromSheet:", e);
+    }
+}
